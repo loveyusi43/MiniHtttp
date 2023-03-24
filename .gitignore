@@ -32,3 +32,6 @@
 *.app
 
 wwwroot/
+test_cgi.*
+
+output/

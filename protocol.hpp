@@ -12,6 +12,7 @@
 #include <string>
 #include <memory>
 #include <sstream>
+#include <cstdlib>
 #include <unordered_map>
 #include <algorithm>
 #include <iostream>
@@ -137,6 +138,9 @@ public:
             }
         }else if (http_requset_.method_ == "POST") {
             http_requset_.cgi_ = true;
+
+            http_requset_.path_ = http_requset_.uri_;
+
         }else{
             // do nothing
         }
@@ -175,7 +179,7 @@ public:
         }
 
         if (http_requset_.cgi_) {
-            // ProcessCgi();
+            ProcessCgi();
         }else{
             code = ProcessNoneCgi(size);
         }
@@ -210,6 +214,10 @@ protected:
         std::string &qurey_string = http_requset_.query_string_;
         std::string &body_text = http_requset_.request_body_;
         std::string &method = http_requset_.method_;
+        std::string env_args;
+        std::string method_env;
+        std::string content_length_env;
+        int content_length = http_requset_.content_length_;
 
         int input[2] = {0};
         int output[2] = {0};
@@ -231,6 +239,22 @@ protected:
             close(input[0]);
             close(output[1]);
             // 站在子进程的角度,可用文件描述符：input[1](写出)、output[0](读入)
+            method_env = "METHOD=";
+            method_env += method;
+            putenv(const_cast<char*>(method_env.c_str()));
+
+            if (method == "GET") {
+                env_args = "QUERY_STRING=";
+                env_args += qurey_string;
+                putenv(const_cast<char*>(env_args.c_str()));
+            }else if (method == "POST") {
+                content_length_env = "CONTENT_LENGTH: ";
+                content_length_env += std::to_string(content_length);
+                putenv(const_cast<char*>(content_length_env.c_str()));
+            }else{
+                LOG(WARNING, "Method: !POST || !GET");
+            }
+
             dup2(output[0], 0);
             dup2(input[1], 1);
 
@@ -248,7 +272,19 @@ protected:
             const char* start = body_text.c_str();
             int total = 0;
             int size = 0;
-            while (size = write(output[1], start+total, body_text.size()-total) > 0) {
+            
+            // while (size = write(output[1], start+total, body_text.size()-total) > 0) {
+            //     total += size;
+            // }
+
+            while (true) {
+                if (total >= content_length) {
+                    break;
+                }
+                size = write(output[1], start+total, body_text.size()-total);
+                if (size <= 0) {
+                    break;
+                }
                 total += size;
             }
         }
