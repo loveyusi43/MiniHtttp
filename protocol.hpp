@@ -1,6 +1,7 @@
 #ifndef PROTOCOL_HPP
 #define PROTOCOL_HPP
 
+// 系统调用头文件
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/types.h>
@@ -9,6 +10,7 @@
 #include <sys/sendfile.h>
 #include <sys/wait.h>
 
+// C++标准库头文件
 #include <string>
 #include <memory>
 #include <sstream>
@@ -18,20 +20,27 @@
 #include <iostream>
 #include <vector>
 
+// 自定义接口或自定义类
 #include "util.hpp"
 #include "log.hpp"
 
-const std::string SEP = ": ";
-const std::string WEB_ROOT = "./wwwroot";
-const std::string HOME_PAGE = "index.html";
-const std::string HTTP_VERSION = "HTTP/1.0";
-const std::string LINE_END = "\r\n";
+// 全部变量
+static const std::string SEP = ": ";
+static const std::string WEB_ROOT = "./wwwroot";
+static const std::string HOME_PAGE = "index.html";
+static const std::string HTTP_VERSION = "HTTP/1.0";
+static const std::string LINE_END = "\r\n";
+static const std::string PAGE_404 = "404.html";
 
-enum Status{
+// 响应状态码
+enum StatusCode{
     OK = 200,
-    NOT_FOUND = 404
+    BAD_REQUEST = 400,
+    NOT_FOUND = 404,
+    SERVER_ERROR = 500
 };
 
+// 全局函数,作用是：将状态码转换为对应的描述
 static std::string Code2Desc(int code) {
     static std::unordered_map<int, std::string> code_2_desc;
     code_2_desc[OK] = "OK";
@@ -40,6 +49,7 @@ static std::string Code2Desc(int code) {
     return code_2_desc[code];
 }
 
+// 全局函数，Content-Type对照表
 static std::string Suffix2Desc(const std::string& suffix) {
     static std::unordered_map<std::string, std::string> desc;
     desc["default"] = "application/octet-stream";
@@ -62,7 +72,8 @@ static std::string Suffix2Desc(const std::string& suffix) {
     return desc[suffix];
 }
 
-class HttpRequset{
+// Http请求的相关内容
+class HttpRequest{
 public:
     std::string request_line_;
     std::vector<std::string> request_header_;
@@ -82,9 +93,12 @@ public:
     std::string query_string_;
     std::string suffix_;
 
+    int request_size_ = 0;
+
     bool cgi_ = false;
 };
 
+// Http响应的相关内容
 class HttpResponse{
 public:
     std::string status_line_;
@@ -93,11 +107,10 @@ public:
     std::string response_body_;
 
     int status_ = OK;
-
     int in_fd_ = -1;
-    int body_size_ = 0;
 };
 
+// 处理Http请求和构建Http响应
 class EndPoint{
 public:
     EndPoint(int sock) : sockfd_(sock) {}
@@ -105,9 +118,9 @@ public:
 
     void RecvHttpRequest() {
         RecvHttpRequestLine();
-        ParseHttpRequsetLine();
-
         RecvHttpRequestHeader();
+
+        ParseHttpRequsetLine();
         ParseHttpRequestHeader();
 
         RecvHttpRequestBody();
@@ -118,119 +131,216 @@ public:
         int &code = http_response_.status_;
         struct stat st;
         std::string path = WEB_ROOT;
-        int size = 0;
+        // int size = 0;
         size_t found = 0;
 
-        if (http_requset_.method_ != "GET" && http_requset_.method_ != "POST") {
+        if (http_request_.method_ != "GET" && http_request_.method_ != "POST") {
             LOG(WARNING, "method is not right!");
-            code = NOT_FOUND;
-            return;
+            code = BAD_REQUEST;
+            goto END;
         }
 
         // 只处理GET和POST
-        if (http_requset_.method_ == "GET") {
-            size_t pos = http_requset_.uri_.find('?');
+        if (http_request_.method_ == "GET") {
+            size_t pos = http_request_.uri_.find('?');
             if (pos != std::string::npos) {
-                Util::CutString(http_requset_.uri_, http_requset_.path_, http_requset_.query_string_, "?");
-                http_requset_.cgi_ = true;
+                Util::CutString(http_request_.uri_, http_request_.path_, http_request_.query_string_, "?");
+                http_request_.cgi_ = true;
             }else{
-                http_requset_.path_ = http_requset_.uri_;
+                http_request_.path_ = http_request_.uri_;
             }
-        }else if (http_requset_.method_ == "POST") {
-            http_requset_.cgi_ = true;
+        }else if (http_request_.method_ == "POST") {
+            http_request_.cgi_ = true;
 
-            http_requset_.path_ = http_requset_.uri_;
+            http_request_.path_ = http_request_.uri_;
 
         }else{
             // do nothing
         }
-        path += http_requset_.path_;
-        http_requset_.path_ = path;
+        path += http_request_.path_;
+        http_request_.path_ = path;
         
-        if (http_requset_.path_[http_requset_.path_.size()-1] == '/') {
-            http_requset_.path_ += HOME_PAGE;
+        if (http_request_.path_[http_request_.path_.size()-1] == '/') {
+            http_request_.path_ += HOME_PAGE;
         }
-        if (stat(http_requset_.path_.c_str(), &st) == 0) {
+        if (stat(http_request_.path_.c_str(), &st) == 0) {
             if (S_ISDIR(st.st_mode)) {
-                http_requset_.path_ += '/';
-                http_requset_.path_ += HOME_PAGE;
-                stat(http_requset_.path_.c_str(), &st);
+                http_request_.path_ += '/';
+                http_request_.path_ += HOME_PAGE;
+                stat(http_request_.path_.c_str(), &st);
             }
 
             if ((st.st_mode & S_IXUSR) || (st.st_mode & S_IXGRP) || (st.st_mode & S_IXOTH)) {
                 // 需要进行特殊处理
-                http_requset_.cgi_ = true;
+                http_request_.cgi_ = true;
             }
-            size = st.st_size;
+            // size = st.st_size;
+            http_request_.request_size_ = st.st_size;
 
         }else{
-            std::string info = http_requset_.path_;
+            std::string info = http_request_.path_;
             info += " Not Found!";
             LOG(WARNING, info);
             code = NOT_FOUND;
-            return;
+            goto END;
         }
 
-        found = http_requset_.path_.rfind('.');
+        found = http_request_.path_.rfind('.');
         if (found == std::string::npos) {
-            http_requset_.suffix_ = ".html";
+            http_request_.suffix_ = ".html";
         }else{
-            http_requset_.suffix_ = http_requset_.path_.substr(found);
+            http_request_.suffix_ = http_request_.path_.substr(found);
         }
 
-        if (http_requset_.cgi_) {
-            ProcessCgi();
+        if (http_request_.cgi_) {
+            code = ProcessCgi();
         }else{
-            code = ProcessNoneCgi(size);
+            code = ProcessNoneCgi();
         }
 
-        if (code != OK) {
-            ;
-        }
+END:
+        BuildHttpResponseHelper();
 
-        std::cout << "debug: uri--> " << http_requset_.uri_ << std::endl;
-        std::cout << "debug: path--> " << http_requset_.path_ << std::endl;
-        std::cout << "debug: args--> " << http_requset_.query_string_ << std::endl;
+        // std::cout << "debug: uri--> " << http_request_.uri_ << std::endl;
+        // std::cout << "debug: path--> " << http_request_.path_ << std::endl;
+        // std::cout << "debug: args--> " << http_request_.query_string_ << std::endl;
     }
 
 
     void SendHttpResponse() {
+        // 发送状态行
         send(sockfd_, http_response_.status_line_.c_str(), http_response_.status_line_.size(), 0);
-        //send(sockfd_, http_response_.response_header_.c_str(), http_response_.response_header_.size(), 0);
+
+        // 发送响应报头
+        LOG(INFO, "start send header");
         for (const std::string &s : http_response_.response_header_) {
             send(sockfd_, s.c_str(), s.size(), 0);
+            LOG(INFO, s);
         }
+        // 发送空行
         send(sockfd_, http_response_.blank_.c_str(), http_response_.blank_.size(), 0);
-        //send(sockfd_, http_response_.response_body_.c_str(), http_response_.response_body_.size(), 0);
-        sendfile(sockfd_, http_response_.in_fd_, nullptr, http_response_.body_size_);
-        close(http_response_.in_fd_);
+        LOG(INFO, http_response_.blank_);
+        LOG(INFO, "start send body");
+        if (http_request_.cgi_) {
+            std::string &response_body = http_response_.response_body_;
+            size_t total = 0;
+            const char* start = response_body.c_str();
+            // LOG(INFO, response_body);
+            while (true) {
+                if (total >= response_body.size()) {
+                    break;
+                }
+                size_t size = send(sockfd_, start+total, response_body.size()-total, 0);
+                if (size <= 0) {
+                    break;
+                }
+                total += size;
+            }
+        }else{
+            sendfile(sockfd_, http_response_.in_fd_, nullptr, http_request_.request_size_);
+            close(http_response_.in_fd_);
+        }
     }
 
 protected:
+    void BuilOKResponse() {
+        std::string line;
+
+        line = "Content-Type: ";
+        line += Suffix2Desc(http_request_.suffix_);
+        line += LINE_END;
+        http_response_.response_header_.push_back(line);
+
+        line = "Content-Length: ";
+        if (http_request_.cgi_) {
+            line += std::to_string(http_response_.response_body_.size());
+        }else{
+            line += std::to_string(http_request_.request_size_);
+        }
+        line += LINE_END;
+        http_response_.response_header_.push_back(line);
+    }
+
+    void HandlerError(const std::string &path) {
+        http_request_.cgi_ = false;
+        http_response_.in_fd_ = open(path.c_str(), O_RDONLY);
+
+        if (http_response_.in_fd_ > 0) {
+            struct stat st;
+            stat(path.c_str(), &st);
+            http_request_.request_size_ = st.st_size;
+            std::string line;
+
+            line = "Content-Type: text/html";
+            line += LINE_END;
+            http_response_.response_header_.push_back(line);
+
+            line = "Content-Length: ";
+            line += std::to_string(st.st_size);
+            line += LINE_END;
+            http_response_.response_header_.push_back(line);
+        }
+    }
+
+    void BuildHttpResponseHelper() {
+        int &code = http_response_.status_;
+        std::string &status_line = http_response_.status_line_;
+        status_line.clear();
+        status_line += HTTP_VERSION;
+        status_line += " ";
+        status_line += std::to_string(code);
+        status_line += " ";
+        status_line += Code2Desc(code);
+        status_line += LINE_END;
+
+        std::string path = WEB_ROOT;
+        path +="/";
+
+        switch (code) {
+        case OK:
+            BuilOKResponse();
+            break;
+        case NOT_FOUND:
+            path += PAGE_404;
+            HandlerError(path);
+            break;
+        case BAD_REQUEST:
+            path += PAGE_404;
+            HandlerError(path);
+            break;
+        case SERVER_ERROR:
+            path += PAGE_404;
+            HandlerError(path);
+            break;
+        default:
+            break;
+        }
+    }
+
     int ProcessCgi() {
         // "管道的读写完全站在父进程的角度"
         int code = OK;
-        std::string &bin = http_requset_.path_;
-        std::string &qurey_string = http_requset_.query_string_;
-        std::string &body_text = http_requset_.request_body_;
-        std::string &method = http_requset_.method_;
+        std::string &bin = http_request_.path_;
+        std::string &qurey_string = http_request_.query_string_;
+        std::string &body_text = http_request_.request_body_;
+        std::string &method = http_request_.method_;
         std::string env_args;
         std::string method_env;
         std::string content_length_env;
-        int content_length = http_requset_.content_length_;
+        std::string &response_body = http_response_.response_body_;
+        int content_length = http_request_.content_length_;
 
         int input[2] = {0};
         int output[2] = {0};
 
         if (pipe(input) < 0){
             LOG(ERROR, "pipe error");
-            code = NOT_FOUND;
+            code = SERVER_ERROR;
             return code;
         }
-
         if (pipe(output) < 0) {
             LOG(ERROR, "pipe error");
-            code = NOT_FOUND;
+            code = SERVER_ERROR;
             return code;
         }
 
@@ -248,7 +358,7 @@ protected:
                 env_args += qurey_string;
                 putenv(const_cast<char*>(env_args.c_str()));
             }else if (method == "POST") {
-                content_length_env = "CONTENT_LENGTH: ";
+                content_length_env = "CONTENT_LENGTH=";
                 content_length_env += std::to_string(content_length);
                 putenv(const_cast<char*>(content_length_env.c_str()));
             }else{
@@ -289,63 +399,97 @@ protected:
             }
         }
 
-        waitpid(pid, nullptr, 0);
+        std::cout << "input[0] --> " << input[0] << std::endl; 
+        char ch = 0;
+        while (read(input[0], &ch, 1) > 0) {
+            response_body += ch;
+        }
+
+        std::cout << "Debug CGI: --> " << response_body << std::endl;
+
+        int status = 0;
+        pid_t ret = waitpid(pid, &status, 0);
+        if (ret == pid) {
+            if (WIFEXITED(status)) {
+                std::cout << "child exit code --> " << WIFEXITED(status) << std::endl;
+
+                // 第一个大BUG，没有判断是否等于0
+                // if (WEXITSTATUS(status)) {...},
+
+                if (0 == WEXITSTATUS(status)) {
+                    code = OK;
+                }else{
+                    code = BAD_REQUEST;
+                }
+            }else{
+                // std::cout << "child exit code --> " << WIFEXITED(status) << std::endl;
+                code = SERVER_ERROR;
+            }
+        }
+
+        std::cout << "[CGIed] --> code: " << code << std::endl;
+
         close(input[0]);
         close(output[1]);
-        return OK;
+        return code;
     }
 
-    int ProcessNoneCgi(int file_size) {
+    int ProcessNoneCgi() {
         // 状态行构建
-        http_response_.in_fd_ = open(http_requset_.path_.c_str(), O_RDONLY);
+        http_response_.in_fd_ = open(http_request_.path_.c_str(), O_RDONLY);
         if (http_response_.in_fd_ > 0) {
-            http_response_.status_line_ = HTTP_VERSION;
-            http_response_.status_line_ += " ";
-            http_response_.status_line_ += std::to_string(http_response_.status_);
-            http_response_.status_line_ += " ";
-            http_response_.status_line_ += Code2Desc(http_response_.status_);
-            http_response_.status_line_ += LINE_END;
-            http_response_.body_size_ = file_size;
+            // http_response_.status_line_ = HTTP_VERSION;
+            // http_response_.status_line_ += " ";
+            // http_response_.status_line_ += std::to_string(http_response_.status_);
+            // http_response_.status_line_ += " ";
+            // http_response_.status_line_ += Code2Desc(http_response_.status_);
+            // http_response_.status_line_ += LINE_END;
+            // http_response_.body_size_ = file_size;
 
-            std::string header_line;
+            // std::string header_line;
 
-            header_line = "Content-Type: ";
-            header_line += Suffix2Desc(http_requset_.suffix_);
-            header_line += LINE_END;
-            http_response_.response_header_.push_back(header_line);
+            // header_line = "Content-Type: ";
+            // header_line += Suffix2Desc(http_request_.suffix_);
+            // header_line += LINE_END;
+            // http_response_.response_header_.push_back(header_line);
 
-            header_line = "Content-Length: ";
-            header_line += std::to_string(http_response_.body_size_);
-            header_line += LINE_END;
-            http_response_.response_header_.push_back(header_line);
+            // header_line = "Content-Length: ";
+            // header_line += std::to_string(http_response_.body_size_);
+            // header_line += LINE_END;
+            // http_response_.response_header_.push_back(header_line);
 
             return OK;
         }
         return NOT_FOUND;
     }
 
-    void RecvHttpRequestBody() {
-        int content_length = http_requset_.content_length_;
-        std::string &body = http_requset_.request_body_;
-        char ch = 0;
-        while (content_length) {
-            ssize_t s = recv(sockfd_, &ch, 1, 0);
-            if (s > 0) {
-                body += ch;
-                --content_length;
-            }else{
-                break;
+    bool RecvHttpRequestBody() {
+        if (isNeedRecvHttpRequestBody()) {
+            int content_length = http_request_.content_length_;
+            std::string &body = http_request_.request_body_;
+            char ch = 0;
+            while (content_length) {
+                ssize_t s = recv(sockfd_, &ch, 1, 0);
+                if (s > 0) {
+                    body += ch;
+                    --content_length;
+                }else{
+                    stop_ = true;
+                    break;
+                }
             }
+            LOG(INFO, body);
         }
+        return stop_;
     }
 
     bool isNeedRecvHttpRequestBody() {
-        std::string &method = http_requset_.method_;
+        std::string &method = http_request_.method_;
         if ("POST" == method) {
-            std::unordered_map<std::string, std::string> header_kv = http_requset_.header_kv;
+            std::unordered_map<std::string, std::string> header_kv = http_request_.header_kv;
             std::unordered_map<std::string, std::string>::iterator iter = header_kv.find("Content-Length");
             if (iter != header_kv.end()) {
-                http_requset_.content_length_ = std::atoi(iter->second.c_str());
+                http_request_.content_length_ = std::atoi(iter->second.c_str());
                 return true;
             }
         }
@@ -355,27 +499,31 @@ protected:
     void ParseHttpRequestHeader() {
         std::string key_out;
         std::string value_out;
-        for (const std::string &iter : http_requset_.request_header_) {
+        for (const std::string &iter : http_request_.request_header_) {
             if (Util::CutString(iter, key_out, value_out, SEP)) {
                 std::cout << "debug--> " << key_out << SEP << value_out << std::endl;
-                http_requset_.header_kv[key_out] = value_out;
+                http_request_.header_kv[key_out] = value_out;
             }
         }
     }
 
-    void RecvHttpRequestLine() {
+    bool RecvHttpRequestLine() {
         std::string line;
-        Util::ReadLine(sockfd_, line);
-        line.resize(line.size()-1);
-        http_requset_.request_line_ = line;
-        LOG(INFO, http_requset_.request_line_);
+        if (Util::ReadLine(sockfd_, line) > 0) {
+            line.resize(line.size()-1);
+            http_request_.request_line_ = line;
+            LOG(INFO, http_request_.request_line_);
+        }else{
+            stop_ = true;
+        }
+        return stop_;
     }
 
     void ParseHttpRequsetLine() {
-        std::string &line = http_requset_.request_line_;
+        std::string &line = http_request_.request_line_;
         std::stringstream ss(line);
-        ss >> http_requset_.method_ >> http_requset_.uri_ >> http_requset_.version_;
-        std::string &method = http_requset_.method_;
+        ss >> http_request_.method_ >> http_request_.uri_ >> http_request_.version_;
+        std::string &method = http_request_.method_;
 
         // std::transform(method.begin(), method.end(), method, ::toupper);
 
@@ -383,34 +531,41 @@ protected:
             toupper(method[i]);
         }
 
-        LOG(INFO, http_requset_.method_);
-        LOG(INFO, http_requset_.uri_);
-        LOG(INFO, http_requset_.version_);
+        LOG(INFO, http_request_.method_);
+        LOG(INFO, http_request_.uri_);
+        LOG(INFO, http_request_.version_);
     }
 
-    void RecvHttpRequestHeader() {
+    bool RecvHttpRequestHeader() {
         std::string line;
         while (1) {
             line.clear();
-            Util::ReadLine(sockfd_, line);
+            if (Util::ReadLine(sockfd_, line) <= 0) {
+                stop_ = true;
+                break;
+            }
+
             if (line == "\n") {
-                http_requset_.blank_ = line;
+                http_request_.blank_ = line;
                 break;
             }
             line.resize(line.size()-1);
-            http_requset_.request_header_.push_back(line);
+            http_request_.request_header_.push_back(line);
             LOG(INFO, line);
         }
         if (line == "\n") {
-            LOG(INFO, http_requset_.blank_);
+            LOG(INFO, http_request_.blank_);
         }
+        return stop_;
     }
 
 protected:
-    int sockfd_;
-    HttpRequset http_requset_;
+    int sockfd_; // 本地网络套接字
+    HttpRequest http_request_;
     HttpResponse http_response_;
+    bool stop_ = false;
 };
+
 
 #define DEBUG
 
