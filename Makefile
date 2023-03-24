@@ -3,9 +3,11 @@ TARGET = http.out
 SRC = $(wildcard *.cc)
 OBJ = $(patsubst %.cc, %.o, $(SRC))
 
-CXXFLAGS = -c -Wall -std=c++11
+# -pthread -Wl,--no-as-needed
+
+CXXFLAGS = -c -Wall -std=c++2a
 $(TARGET): $(OBJ)
-	$(CXX) -o $@ $^
+	$(CXX) -o $@ $^ -pthread -Wl,--no-as-needed
 
 %.o: %.cc
 	$(CXX) $(CXXFLAGS) $<

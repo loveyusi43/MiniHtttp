@@ -1,16 +1,21 @@
 #include <iostream>
+#include <memory>
+#include <chrono>
+#include "log.hpp"
+#include "http_server.hpp"
 #include "tcp_server.hpp"
 
-int main(int argc, char* argv[]){
-    if (argc != 2) {
-        std::cout << "./prorected port\n";
+int main(int argc, char* argv[]) {
+    if (2 != argc) {
+        std::cout << "请指明端口\n";
         exit(4);
     }
 
     int port = std::atoi(argv[1]);
-    TcpServer* server = TcpServer::GetInstance(port);
 
-    std::cout << "我他妈来了\n";
+    std::shared_ptr<HttpServer> server{new HttpServer{port}};
+
+    server->Loop();
 
     return 0;
 }
