@@ -116,14 +116,19 @@ public:
     EndPoint(int sock) : sockfd_(sock) {}
     ~EndPoint() {close(sockfd_); }
 
+    bool Stop() const {
+        return stop_;
+    }
+
     void RecvHttpRequest() {
-        RecvHttpRequestLine();
-        RecvHttpRequestHeader();
+        // RecvHttpRequestLine();
+        // RecvHttpRequestHeader();
 
-        ParseHttpRequsetLine();
-        ParseHttpRequestHeader();
-
-        RecvHttpRequestBody();
+        if ((!RecvHttpRequestLine()) && (!RecvHttpRequestHeader())) {
+            ParseHttpRequsetLine();
+            ParseHttpRequestHeader();
+            RecvHttpRequestBody();
+        }
     }
 
 
@@ -569,9 +574,13 @@ protected:
 
 #define DEBUG
 
-class Entrance{
+class CallBack{
 public:
-    static void HandlerRequest(int sock) {
+    void operator()(int sock) {
+        HandlerRequest(sock);
+    }
+
+    void HandlerRequest(int sock) {
         LOG(INFO, "hander request begin");
         //std::cout << "get a new link ... : " << sock << std::endl;
 #ifdef DEBUG
@@ -584,8 +593,13 @@ public:
         std::shared_ptr<EndPoint> ep{new EndPoint{sock}};
         ep->RecvHttpRequest();
         //ep->ParseHttpRequset();
-        ep->BuildHttpResponse();
-        ep->SendHttpResponse();
+        if (!ep->Stop()) {
+            LOG(INFO, "Recv No Error, Begin Build And Send");
+            ep->BuildHttpResponse();
+            ep->SendHttpResponse();
+        }else{
+            LOG(INFO, "Recv Error, Stop Build And Send");
+        }
 #endif
         LOG(INFO, "hander request end");
     }

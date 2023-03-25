@@ -68,7 +68,7 @@ protected:
         local.sin_port = htons(port_);
 
         if (bind(listen_sock_, /*(struct sockaddr*)&local*/ reinterpret_cast<struct sockaddr*>(&local), sizeof(local)) < 0) {
-            //std::cout << "bind error\n";
+            // std::cout << "bind error\n";
             LOG(FATAL, "bind error");
             exit(2);
         }

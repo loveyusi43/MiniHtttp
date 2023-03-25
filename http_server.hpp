@@ -3,21 +3,26 @@
 
 #include <thread>
 
+#include <signal.h>
+
 #include "protocol.hpp"
 #include "tcp_server.hpp"
 #include "log.hpp"
+#include "task.hpp"
+#include "thread_pool.hpp"
 
 static constexpr int PORT = 8080;
 
 class HttpServer{
 public:
-    HttpServer(int port = PORT) : port_(port), tcp_server_(nullptr), stop(false) {
-        tcp_server_ = TcpServer::GetInstance(port_);
+    HttpServer(int port = PORT) : port_(port), stop(false) {
+        signal(SIGPIPE, SIG_IGN);
     }
 
     void Loop() {
         LOG(INFO, "Loop begin");
-        int listen_sock = tcp_server_->GetSock();
+        // int listen_sock = tcp_server_->GetSock();
+        int listen_sock = TcpServer::GetInstance(port_)->GetSock();
 
         while (!stop) {
             struct sockaddr_in peer;
@@ -28,14 +33,17 @@ public:
                 continue;
             }
             LOG(INFO, "get a new link");
-            std::thread t(Entrance::HandlerRequest, sock);
+
+            // ThreadPool::GetInstance()->PushTask(Task());
+
+            CallBack cb;
+            std::thread t(&CallBack::HandlerRequest, &cb, sock);
             t.detach();
         }
     }
 
 protected:
     int port_;
-    TcpServer* tcp_server_;
     bool stop;
 };
 
